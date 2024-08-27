@@ -6,6 +6,7 @@ let lose_amount = -0.1;
 let other_amount = -0.0;
 let idle_amount = 0.3;
 let noise_amount = 0.02;
+// gotta press Space to turn on the noise
 
 let neighbor_weights = [
                         0.5, 0.5, 0.5,
@@ -20,6 +21,7 @@ let self_weights =     [
 
 let sys = {
 	curr_time: 0,
+	noise_active: false,
 	buffers: [[], []],
 	curr_buffer: [],
 	next_buffer: [],
@@ -37,10 +39,32 @@ function main() {
 	sys.start_time = Date.now();
 	sys.curr_time = sys.start_time;
 	init_slots();
+	init_sources();
 	render();
 }
 function register_events() {
 	window.addEventListener("resize", window_resize);
+	window.addEventListener("keydown", window_keydown);
+	window.addEventListener("mousedown", window_mousedown);
+	window.addEventListener("mouseup", window_mouseup);
+	window.addEventListener("mousemove", window_mousemove);
+}
+function window_keydown(event) {
+	if (event.code == "Space") {
+		sys.noise_active = sys.noise_active == false;
+	}
+}
+function window_mousedown(event) {
+	if (event.buttons & 1) {
+		sys.mouse_held = true;
+	}
+}
+function window_mouseup(event) {
+	sys.mouse_held = false;
+}
+function window_mousemove(event) {
+	sys.mouse_x = event.clientX;
+	sys.mouse_y = event.clientY;
 }
 function window_resize(event) {
 	resize_canvas();
@@ -49,11 +73,29 @@ function resize_canvas() {
 	canvas.width = canvas_width;
 	canvas.height = canvas_height;
 }
+function update_input() {
+	if (sys.mouse_held) {
+		let canvas_rect = canvas.getBoundingClientRect();
+		if (canvas_rect.left <= sys.mouse_x && sys.mouse_x < canvas_rect.right &&
+		    canvas_rect.top <= sys.mouse_y && sys.mouse_y < canvas_rect.bottom) {
+			let canvas_x = sys.mouse_x - canvas_rect.left;
+			let canvas_y = sys.mouse_y - canvas_rect.top;
+		    let viewport_width = canvas_rect.right - canvas_rect.left;
+		    let viewport_height = canvas_rect.bottom - canvas_rect.top;
+		    let grid_x = Math.floor(canvas_x / (viewport_width / canvas.width));
+		    let grid_y = Math.floor(canvas_y / (viewport_height / canvas.height));
+		    add_center(sys.curr_buffer, grid_x, grid_y);
+		    add_center(sys.next_buffer, grid_x, grid_y);
+		}
+	}
+}
 function render() {
 	sys.curr_time = Date.now();
 
 	ctx.clearColor = "rgba(0,0,0,0)";
 	ctx.clearRect(0,0, canvas.width, canvas.height);
+
+	update_input();
 
 	swap_buffers();
 	calculate_next_frame();
@@ -82,7 +124,6 @@ const Quantumata_Buffer = {
 	height: 0,
 	choice_count: 0,
 	slots: null,
-	collapsed: null,
 };
 function make_quantumata_buffer(width, height, choice_count = 4) {
 	let buffer = Object.assign({}, Quantumata_Buffer);
@@ -90,7 +131,6 @@ function make_quantumata_buffer(width, height, choice_count = 4) {
 	buffer.height = height;
 	buffer.choice_count = choice_count;
 	buffer.slots = new Array(buffer.width * buffer.height * buffer.choice_count).fill(0.0);
-	buffer.collapsed = new Array(buffer.width * buffer.height).fill(0);
 	return buffer;
 }
 function clear_buffer(buffer) {
@@ -164,15 +204,15 @@ function init_slots() {
 	sys.buffer_index = 0;
 	sys.curr_buffer = sys.buffers[sys.buffer_index];
 	sys.next_buffer = sys.buffers[sys.buffer_index+1];
-	init_sources();
 }
 function init_sources() {
-	init_three_centers(sys.curr_buffer);
+	init_something(sys.curr_buffer);
+	// init_three_centers(sys.curr_buffer);
 	copy_buffers(sys.curr_buffer, sys.next_buffer);
 }
-function init_three_centers(buffer) {
+function init_something(buffer) {
 	for (let i = 0; i < buffer.slots.length; i += buffer.choice_count) {
-		let nothing_amount = 0.999;
+		let nothing_amount = 1.0;
 		let everything_amount = 1.0 - nothing_amount;
 		let something_amount = everything_amount / (buffer.choice_count-1);
 		buffer.slots[i] = nothing_amount;
@@ -180,19 +220,42 @@ function init_three_centers(buffer) {
 			buffer.slots[i + j] = something_amount;
 		}
 	}
+}
+function init_three_centers(buffer) {
 	let x = Math.floor(canvas.width / 3);
 	let y = Math.floor(canvas.height / 3);
-	let index = y * canvas.width + x;
-	buffer.slots[index*buffer.choice_count+1] = 0.9;
+	add_center(buffer, x, y);
 	x = Math.floor(canvas.width / 3) * 2;
 	y = Math.floor(canvas.height / 3);
-	index = y * canvas.width + x;
-	buffer.slots[index*buffer.choice_count+2] = 0.9;
+	add_center(buffer, x, y);
 	x = Math.floor(canvas.width / 2);
 	y = Math.floor(canvas.height / 3) * 2;
-	index = y * canvas.width + x;
-	buffer.slots[index*buffer.choice_count+3] = 0.9;
-	normalize_buffer(buffer);
+	add_center(buffer, x, y);
+}
+function add_center(buffer, x, y) {
+	let top_left_index       = get_slot_2d_index(buffer, x-1, y-1);
+	let mid_left_index       = get_slot_2d_index(buffer, x-1, y-0);
+	let mid_center_index     = get_slot_2d_index(buffer, x-0, y-0);
+	let mid_right_index      = get_slot_2d_index(buffer, x+1, y-0);
+	let bottom_left_index    = get_slot_2d_index(buffer, x-1, y+1);
+	let bottom_center_index  = get_slot_2d_index(buffer, x-0, y+1);
+
+	set_slot(buffer, top_left_index, 1);
+	set_slot(buffer, mid_left_index, 1);
+	set_slot(buffer, mid_center_index, 2);
+	set_slot(buffer, mid_right_index, 2);
+	set_slot(buffer, bottom_left_index, 3);
+	set_slot(buffer, bottom_center_index, 3);
+}
+function set_slot(buffer, index, choice) {
+	for (let i = 0; i < buffer.choice_count; i += 1) {
+		if (i == choice) {
+			buffer.slots[index * buffer.choice_count + i] = 1.0;
+		}
+		else {
+			buffer.slots[index * buffer.choice_count + i] = 0.0;
+		}
+	}
 }
 function init_random(buffer) {
 	for (let i = 0; i < buffer.slots.length; i += 1) {
@@ -291,7 +354,9 @@ function calculate_next_frame() {
 			}
 		}
 	}
-	add_noise(sys.next_buffer, noise_amount);
+	if (sys.noise_active) {
+		add_noise(sys.next_buffer, noise_amount);
+	}
 	normalize_buffer(sys.next_buffer);
 }
 function add_noise(buffer, amount) {
